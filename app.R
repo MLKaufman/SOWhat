@@ -4,6 +4,8 @@ library(bslib)
 library(ggplot2)
 library(magrittr)
 library(gtools)
+library(DT)
+library(dplyr)
 
 # Set max upload size to 2GB for large Seurat objects
 options(shiny.maxRequestSize = 2000 * 1024^2)
@@ -21,11 +23,54 @@ ui <- page_sidebar(
     hr(),
     helpText("Note: Plot uses rasterization for high performance.")
   ),
-  layout_column_wrap(
-    width = 1,
-    card(
-      card_header("UMAP Projection"),
-      plotly::plotlyOutput("umap_plot", height = "600px")
+  layout_sidebar(
+    fillable = TRUE,
+    sidebar = sidebar(
+      width = "65%",
+      navset_card_tab(
+        title = "Projection & Analysis",
+        nav_panel(
+          "UMAP",
+          plotly::plotlyOutput("umap_plot", height = "800px")
+        ),
+        nav_panel(
+          "Dot Plot",
+          card_body(
+            layout_column_wrap(
+              width = 1,
+              textAreaInput("genes", "Enter Gene List",
+                placeholder = "e.g., PTPRC, CD3E, CD19", rows = 3, width = "100%"
+              ),
+              div(
+                class = "d-flex gap-2 mb-3",
+                actionButton("preset_immune", "Immune", class = "btn-outline-primary btn-sm"),
+                actionButton("preset_death", "Cell Death", class = "btn-outline-primary btn-sm"),
+                actionButton("preset_prolif", "Proliferation", class = "btn-outline-primary btn-sm"),
+                actionButton("preset_cycle", "Cell Cycle", class = "btn-outline-primary btn-sm")
+              )
+            ),
+            plotOutput("dot_plot", height = "800px")
+          )
+        ),
+        nav_panel(
+          "Markers",
+          layout_sidebar(
+            sidebar = sidebar(
+              actionButton("run_markers", "Find All Markers", class = "btn-primary w-100"),
+              hr(),
+              helpText("Calculates markers for all clusters at the current resolution.")
+            ),
+            card(
+              card_header("Top 10 Markers Heatmap"),
+              plotOutput("markers_heatmap")
+            ),
+            card(
+              card_header("All Markers Table"),
+              DT::DTOutput("markers_table")
+            )
+          )
+        )
+      )
     ),
     card(
       card_header(
@@ -92,6 +137,134 @@ server <- function(input, output, session) {
     plotly::ggplotly(p) %>%
       plotly::layout(yaxis = list(scaleanchor = "x", scaleratio = 1))
   })
+
+  # Helper to format genes based on detected species
+  format_genes <- function(gene_list, obj) {
+    # Check if rownames are mostly uppercase (Human) or title case (Mouse)
+    all_genes <- rownames(obj)
+    # Sample a few genes to check
+    sample_genes <- head(all_genes, 100)
+    is_upper <- sum(grepl("^[A-Z0-9]+$", sample_genes)) > length(sample_genes) * 0.5
+
+    if (is_upper) {
+      return(toupper(gene_list))
+    } else {
+      # Title case: Uppercase first letter, lowercase the rest
+      return(paste0(toupper(substr(gene_list, 1, 1)), tolower(substr(gene_list, 2, nchar(gene_list)))))
+    }
+  }
+
+  # Preset observers
+  observeEvent(input$preset_immune, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("PTPRC", "CD3E", "CD19", "CD8A", "CD4", "MS4A1", "CD14", "FCGR3A"), obj)
+    updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
+  })
+
+  observeEvent(input$preset_death, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("BAX", "BAK1", "CASP3", "CASP8", "CASP9", "FAS"), obj)
+    updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
+  })
+
+  observeEvent(input$preset_prolif, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("MKI67", "TOP2A", "PCNA", "MCM2"), obj)
+    updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
+  })
+
+  observeEvent(input$preset_cycle, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("CCND1", "CCNE1", "CDK2", "CDK4"), obj)
+    updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
+  })
+
+  # Render the Dot Plot
+  output$dot_plot <- renderPlot({
+    obj <- raw_obj()
+    req(obj, input$resolution, input$genes)
+
+    # Parse and clean gene list
+    gene_list <- unlist(strsplit(input$genes, "[, \t\n\r]+"))
+    gene_list <- gene_list[gene_list != ""]
+
+    if (length(gene_list) == 0) {
+      return(NULL)
+    }
+
+    # Validate genes exist in the object
+    valid_genes <- intersect(gene_list, rownames(obj))
+
+    if (length(valid_genes) == 0) {
+      return(ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = "No valid genes found in dataset") +
+        theme_void())
+    }
+
+    # Ensure the resolution is set as the active identity
+    Idents(obj) <- input$resolution
+
+    DotPlot(obj, features = valid_genes) +
+      RotatedAxis() +
+      labs(title = paste("Dot Plot - Resolution:", input$resolution))
+  })
+
+  # Reactive value for markers
+  markers_data <- reactiveVal(NULL)
+
+  # Run FindAllMarkers
+  observeEvent(input$run_markers, {
+    obj <- raw_obj()
+    req(obj, input$resolution)
+
+    withProgress(message = "Finding markers (this may take a minute)...", {
+      # Ensure active identity matches selected resolution
+      Idents(obj) <- input$resolution
+      res <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+      markers_data(res)
+    })
+  })
+
+  # Render Markers Table
+  output$markers_table <- DT::renderDT({
+    req(markers_data())
+    df <- markers_data() %>% filter(p_val_adj < 0.05)
+    DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE))
+  })
+
+  # Render Markers Heatmap
+  output$markers_heatmap <- renderPlot(
+    {
+      res <- markers_data()
+      obj <- raw_obj()
+      req(res, obj, input$resolution)
+
+      # Get top 10 markers per cluster
+      top10 <- res %>%
+        group_by(cluster) %>%
+        slice_max(n = 10, order_by = avg_log2FC)
+
+      # Ensure active identity matches
+      Idents(obj) <- input$resolution
+
+      DoHeatmap(obj, features = top10$gene) + NoLegend()
+    },
+    height = function() {
+      res <- markers_data()
+      if (is.null(res)) {
+        return(800)
+      }
+      top10 <- res %>%
+        group_by(cluster) %>%
+        slice_max(n = 10, order_by = avg_log2FC)
+      # Approx 18px per gene + 200px for headers/labels
+      max(800, nrow(top10) * 18 + 200)
+    }
+  )
 
   # Reactive value for cluster annotations
   annotes <- reactiveValues(data = list())

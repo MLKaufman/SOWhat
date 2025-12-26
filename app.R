@@ -78,6 +78,7 @@ ui <- page_sidebar(
             sidebar = sidebar(
               selectInput("ref_file", "Select Reference Matrix", choices = NULL),
               actionButton("run_clustifyr", "Run Clustifyr", class = "btn-primary w-100"),
+              actionButton("apply_clustifyr", "Apply Top Cell Types", class = "btn-success w-100 mt-2"),
               hr(),
               helpText("Reference matrices should be .rds files in the 'refmats' folder.")
             ),
@@ -400,6 +401,26 @@ server <- function(input, output, session) {
       cluster_rows = TRUE,
       cluster_columns = TRUE
     )
+  })
+
+  # Apply Top Cell Types from Clustifyr
+  observeEvent(input$apply_clustifyr, {
+    res <- clustifyr_res()
+    req(res)
+
+    # Iterate through current clusters
+    clusters <- rownames(res)
+    for (cl in clusters) {
+      # find column with max correlation
+      best_hit <- colnames(res)[which.max(res[cl, ])]
+
+      # Determine input ID
+      id <- paste0("ann_", input$resolution, "_", cl)
+
+      # Update reactive data and UI
+      annotes$data[[id]] <- best_hit
+      updateTextInput(session, id, value = best_hit)
+    }
   })
 
   # Reactive value for markers

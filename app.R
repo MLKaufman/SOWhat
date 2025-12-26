@@ -103,6 +103,33 @@ server <- function(input, output, session) {
     })
   })
 
+  # Reactive annotated object
+  annotated_obj <- reactive({
+    obj <- raw_obj()
+    req(obj, input$resolution)
+
+    # Set active resolution
+    Idents(obj) <- input$resolution
+
+    # Get current clusters
+    clusters <- gtools::mixedsort(unique(as.character(obj@meta.data[[input$resolution]])))
+
+    # Map old names to new names from inputs or defaults
+    new_names <- sapply(clusters, function(cl) {
+      id <- paste0("ann_", input$resolution, "_", cl)
+      val <- input[[id]]
+      if (is.null(val) || val == "") {
+        # Fallback to reactiveValues if input isn't ready yet or empty
+        val <- annotes$data[[id]]
+      }
+      if (is.null(val) || val == "") cl else val
+    })
+
+    names(new_names) <- clusters
+    # RenameIdents handles named vector where names=old, values=new
+    RenameIdents(obj, new_names)
+  })
+
   # Update resolution choices when object is loaded
   observe({
     obj <- raw_obj()
@@ -124,13 +151,10 @@ server <- function(input, output, session) {
 
   # Render the UMAP plot
   output$umap_plot <- plotly::renderPlotly({
-    obj <- raw_obj()
-    req(obj, input$resolution)
+    obj <- annotated_obj()
+    req(obj)
 
-    # Ensure the resolution is set as the active identity
-    Idents(obj) <- input$resolution
-
-    p <- DimPlot(obj, reduction = "umap", label = TRUE, raster = FALSE) +
+    p <- DimPlot(obj, label = TRUE, raster = FALSE) +
       theme_minimal() +
       labs(title = paste("Resolution:", input$resolution))
 
@@ -185,8 +209,8 @@ server <- function(input, output, session) {
 
   # Render the Dot Plot
   output$dot_plot <- renderPlot({
-    obj <- raw_obj()
-    req(obj, input$resolution, input$genes)
+    obj <- annotated_obj()
+    req(obj, input$genes)
 
     # Parse and clean gene list
     gene_list <- unlist(strsplit(input$genes, "[, \t\n\r]+"))
@@ -205,9 +229,6 @@ server <- function(input, output, session) {
         theme_void())
     }
 
-    # Ensure the resolution is set as the active identity
-    Idents(obj) <- input$resolution
-
     DotPlot(obj, features = valid_genes) +
       RotatedAxis() +
       labs(title = paste("Dot Plot - Resolution:", input$resolution))
@@ -218,12 +239,10 @@ server <- function(input, output, session) {
 
   # Run FindAllMarkers
   observeEvent(input$run_markers, {
-    obj <- raw_obj()
-    req(obj, input$resolution)
+    obj <- annotated_obj()
+    req(obj)
 
     withProgress(message = "Finding markers (this may take a minute)...", {
-      # Ensure active identity matches selected resolution
-      Idents(obj) <- input$resolution
       res <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
       markers_data(res)
     })
@@ -240,16 +259,13 @@ server <- function(input, output, session) {
   output$markers_heatmap <- renderPlot(
     {
       res <- markers_data()
-      obj <- raw_obj()
-      req(res, obj, input$resolution)
+      obj <- annotated_obj()
+      req(res, obj)
 
       # Get top 10 markers per cluster
       top10 <- res %>%
         group_by(cluster) %>%
         slice_max(n = 10, order_by = avg_log2FC)
-
-      # Ensure active identity matches
-      Idents(obj) <- input$resolution
 
       DoHeatmap(obj, features = top10$gene, angle = 90) + NoLegend()
     },
@@ -293,8 +309,8 @@ server <- function(input, output, session) {
           id_ann <- paste0("ann_", input$resolution, "_", cl)
           id_reason <- paste0("reason_", input$resolution, "_", cl)
 
-          # Retrieve existing values if any
-          val_ann <- if (!is.null(annotes$data[[id_ann]])) annotes$data[[id_ann]] else ""
+          # Retrieve existing values if any, default to cluster ID if set
+          val_ann <- if (!is.null(annotes$data[[id_ann]]) && annotes$data[[id_ann]] != "") annotes$data[[id_ann]] else cl
           val_reason <- if (!is.null(annotes$data[[id_reason]])) annotes$data[[id_reason]] else ""
 
           tags$tr(
@@ -356,11 +372,13 @@ server <- function(input, output, session) {
         Cluster = clusters,
         Annotation = sapply(clusters, function(cl) {
           id <- paste0("ann_", input$resolution, "_", cl)
-          if (!is.null(annotes$data[[id]])) annotes$data[[id]] else ""
+          val <- if (!is.null(input[[id]])) input[[id]] else annotes$data[[id]]
+          if (is.null(val) || val == "") cl else val
         }),
         Reason = sapply(clusters, function(cl) {
           id <- paste0("reason_", input$resolution, "_", cl)
-          if (!is.null(annotes$data[[id]])) annotes$data[[id]] else ""
+          val <- if (!is.null(input[[id]])) input[[id]] else annotes$data[[id]]
+          if (is.null(val)) "" else val
         }),
         stringsAsFactors = FALSE
       )

@@ -251,7 +251,7 @@ server <- function(input, output, session) {
       # Ensure active identity matches
       Idents(obj) <- input$resolution
 
-      DoHeatmap(obj, features = top10$gene) + NoLegend()
+      DoHeatmap(obj, features = top10$gene, angle = 90) + NoLegend()
     },
     height = function() {
       res <- markers_data()

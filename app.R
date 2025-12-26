@@ -53,6 +53,25 @@ ui <- page_sidebar(
           )
         ),
         nav_panel(
+          "Module Scores",
+          card_body(
+            layout_column_wrap(
+              width = 1,
+              textAreaInput("module_genes", "Enter Gene List for Module Score",
+                placeholder = "e.g., PTPRC, CD3E, CD19", rows = 3, width = "100%"
+              ),
+              div(
+                class = "d-flex gap-2 mb-3",
+                actionButton("module_preset_immune", "Immune", class = "btn-outline-primary btn-sm"),
+                actionButton("module_preset_death", "Cell Death", class = "btn-outline-primary btn-sm"),
+                actionButton("module_preset_prolif", "Proliferation", class = "btn-outline-primary btn-sm"),
+                actionButton("module_preset_cycle", "Cell Cycle", class = "btn-outline-primary btn-sm")
+              )
+            ),
+            plotOutput("module_plot", height = "800px")
+          )
+        ),
+        nav_panel(
           "Markers",
           layout_sidebar(
             sidebar = sidebar(
@@ -207,6 +226,35 @@ server <- function(input, output, session) {
     updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
   })
 
+  # Module Preset observers
+  observeEvent(input$module_preset_immune, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("PTPRC", "CD3E", "CD19", "CD8A", "CD4", "MS4A1", "CD14", "FCGR3A"), obj)
+    updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
+  })
+
+  observeEvent(input$module_preset_death, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("BAX", "BAK1", "CASP3", "CASP8", "CASP9", "FAS"), obj)
+    updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
+  })
+
+  observeEvent(input$module_preset_prolif, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("MKI67", "TOP2A", "PCNA", "MCM2"), obj)
+    updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
+  })
+
+  observeEvent(input$module_preset_cycle, {
+    obj <- raw_obj()
+    req(obj)
+    genes <- format_genes(c("CCND1", "CCNE1", "CDK2", "CDK4"), obj)
+    updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
+  })
+
   # Render the Dot Plot
   output$dot_plot <- renderPlot({
     obj <- annotated_obj()
@@ -232,6 +280,39 @@ server <- function(input, output, session) {
     DotPlot(obj, features = valid_genes) +
       RotatedAxis() +
       labs(title = paste("Dot Plot - Resolution:", input$resolution))
+  })
+
+  # Render the Module Plot
+  output$module_plot <- renderPlot({
+    obj <- annotated_obj()
+    req(obj, input$module_genes)
+
+    # Parse and clean gene list
+    gene_list <- unlist(strsplit(input$module_genes, "[, \t\n\r]+"))
+    gene_list <- gene_list[gene_list != ""]
+
+    if (length(gene_list) == 0) {
+      return(NULL)
+    }
+
+    # Validate genes exist in the object
+    valid_genes <- intersect(gene_list, rownames(obj))
+
+    if (length(valid_genes) == 0) {
+      return(ggplot() +
+        annotate("text", x = 0.5, y = 0.5, label = "No valid genes found in dataset") +
+        theme_void())
+    }
+
+    # Add Module Score
+    # We use a unique name to avoid collisions
+    score_name <- "UserModule"
+    obj <- AddModuleScore(obj, features = list(valid_genes), name = score_name)
+
+    # VlnPlot uses the name + "1"
+    VlnPlot(obj, features = paste0(score_name, "1")) +
+      NoLegend() +
+      labs(title = "Module Score Distribution", y = "Score")
   })
 
   # Reactive value for markers

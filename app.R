@@ -6,6 +6,7 @@ library(magrittr)
 library(gtools)
 library(DT)
 library(dplyr)
+library(clustifyr)
 
 # Set max upload size to 2GB for large Seurat objects
 options(shiny.maxRequestSize = 2000 * 1024^2)
@@ -69,6 +70,18 @@ ui <- page_sidebar(
               )
             ),
             plotOutput("module_plot", height = "800px")
+          )
+        ),
+        nav_panel(
+          "Clustifyr",
+          layout_sidebar(
+            sidebar = sidebar(
+              selectInput("ref_file", "Select Reference Matrix", choices = NULL),
+              actionButton("run_clustifyr", "Run Clustifyr", class = "btn-primary w-100"),
+              hr(),
+              helpText("Reference matrices should be .rds files in the 'refmats' folder.")
+            ),
+            plotOutput("clustifyr_plot", height = "800px")
           )
         ),
         nav_panel(
@@ -166,6 +179,10 @@ server <- function(input, output, session) {
     }
 
     updateSelectInput(session, "resolution", choices = res_cols, selected = head(res_cols, 1))
+
+    # Update refmats choices
+    ref_files <- list.files("refmats", pattern = "\\.rds$", full.names = FALSE)
+    updateSelectInput(session, "ref_file", choices = ref_files)
   })
 
   # Render the UMAP plot
@@ -313,6 +330,76 @@ server <- function(input, output, session) {
     VlnPlot(obj, features = paste0(score_name, "1")) +
       NoLegend() +
       labs(title = "Module Score Distribution", y = "Score")
+  })
+
+  # Reactive value for clustifyr results
+  clustifyr_res <- reactiveVal(NULL)
+
+  # Run Clustifyr
+  observeEvent(input$run_clustifyr, {
+    obj <- annotated_obj()
+    req(obj, input$ref_file)
+
+    withProgress(message = "Running Clustifyr analysis...", {
+      ref_path <- file.path("refmats", input$ref_file)
+      ref_mat <- readRDS(ref_path)
+
+      # Clustifyr metadata formatting fix:
+      # Explicitly add current annotations to the metadata
+      obj$current_annotations <- as.character(Idents(obj))
+
+      # Handle Gene Name Overlap (Case-Insensitive matching)
+      # Normalize both query and reference genes to uppercase for better matching
+      query_genes_orig <- rownames(obj)
+      ref_genes_orig <- rownames(ref_mat)
+
+      # Create a version of ref_mat with uppercase rownames
+      ref_mat_upper <- ref_mat
+      rownames(ref_mat_upper) <- toupper(ref_genes_orig)
+
+      # Determine if we should also uppercase the query genes
+      # (If the overlap is low, we'll try uppercase)
+      if (length(intersect(query_genes_orig, ref_genes_orig)) < 10) {
+        # Create a temporary expression matrix with uppercase gene names for clustifyr
+        # Instead of modifying the Seurat object (which is heavy), we can pass the data directly
+        # or just hope clustifyr handles the query_genes argument well.
+        # However, the most robust way is to provide a ref_mat that matches the query nomenclature.
+
+        # Test if query is TitleCase (Mouse)
+        is_mouse <- any(grepl("^[A-Z][a-z]", head(query_genes_orig, 50)))
+        if (is_mouse) {
+          # Format ref genes to TitleCase
+          rownames(ref_mat) <- paste0(
+            toupper(substr(ref_genes_orig, 1, 1)),
+            tolower(substr(ref_genes_orig, 2, nchar(ref_genes_orig)))
+          )
+        } else {
+          # Default to everything UPPERCASE
+          rownames(ref_mat) <- toupper(rownames(ref_mat))
+        }
+      }
+
+      # Run clustify
+      res <- clustify(
+        input = obj,
+        ref_mat = ref_mat,
+        cluster_col = "current_annotations",
+        obj_out = FALSE
+      )
+      clustifyr_res(res)
+    })
+  })
+
+  # Render Clustifyr Heatmap
+  output$clustifyr_plot <- renderPlot({
+    res <- clustifyr_res()
+    req(res)
+
+    plot_cor_heatmap(
+      cor_mat = res,
+      cluster_rows = TRUE,
+      cluster_columns = TRUE
+    )
   })
 
   # Reactive value for markers

@@ -12,8 +12,8 @@ library(clustifyr)
 options(shiny.maxRequestSize = 2000 * 1024^2)
 
 ui <- page_sidebar(
-  title = "Seurat Explorer High-Performance",
   sidebar = sidebar(
+    titlePanel("SOWhat?"),
     fileInput("file", "Upload Seurat Object (.rds)", accept = ".rds"),
     selectInput("resolution", "Clustering Resolution", choices = NULL),
     hr(),
@@ -21,8 +21,7 @@ ui <- page_sidebar(
       card_header("Object Statistics"),
       tableOutput("stats_table")
     ),
-    hr(),
-    helpText("Note: Plot uses rasterization for high performance.")
+    hr()
   ),
   layout_sidebar(
     fillable = TRUE,
@@ -42,13 +41,7 @@ ui <- page_sidebar(
               textAreaInput("genes", "Enter Gene List",
                 placeholder = "e.g., PTPRC, CD3E, CD19", rows = 3, width = "100%"
               ),
-              div(
-                class = "d-flex gap-2 mb-3",
-                actionButton("preset_immune", "Immune", class = "btn-outline-primary btn-sm"),
-                actionButton("preset_death", "Cell Death", class = "btn-outline-primary btn-sm"),
-                actionButton("preset_prolif", "Proliferation", class = "btn-outline-primary btn-sm"),
-                actionButton("preset_cycle", "Cell Cycle", class = "btn-outline-primary btn-sm")
-              )
+              uiOutput("dot_preset_buttons")
             ),
             plotOutput("dot_plot", height = "800px")
           )
@@ -61,13 +54,7 @@ ui <- page_sidebar(
               textAreaInput("module_genes", "Enter Gene List for Module Score",
                 placeholder = "e.g., PTPRC, CD3E, CD19", rows = 3, width = "100%"
               ),
-              div(
-                class = "d-flex gap-2 mb-3",
-                actionButton("module_preset_immune", "Immune", class = "btn-outline-primary btn-sm"),
-                actionButton("module_preset_death", "Cell Death", class = "btn-outline-primary btn-sm"),
-                actionButton("module_preset_prolif", "Proliferation", class = "btn-outline-primary btn-sm"),
-                actionButton("module_preset_cycle", "Cell Cycle", class = "btn-outline-primary btn-sm")
-              )
+              uiOutput("module_preset_buttons")
             ),
             plotOutput("module_plot", height = "800px")
           )
@@ -109,7 +96,10 @@ ui <- page_sidebar(
       card_header(
         "Cluster Annotations",
         class = "d-flex justify-content-between align-items-center",
-        downloadButton("download_annotes", "Save Annotations", class = "btn-sm")
+        div(
+          actionButton("reset_annotes", label = NULL, icon = icon("rotate-left"), class = "btn-sm btn-outline-danger"),
+          downloadButton("download_annotes", "", class = "btn-sm")
+        )
       ),
       uiOutput("cluster_table_ui")
     )
@@ -215,62 +205,150 @@ server <- function(input, output, session) {
     }
   }
 
-  # Preset observers
+  # Dynamic Preset Generation
+  genefiles <- reactive({
+    list.files("genelists", pattern = "\\.txt$", full.names = FALSE)
+  })
+
+  # Helper to load genes from file
+  load_genes_from_file <- function(filename) {
+    path <- file.path("genelists", filename)
+    if (!file.exists(path)) {
+      return(character(0))
+    }
+    content <- readLines(path, warn = FALSE)
+    # Split by comma, space, or tab
+    genes <- unlist(strsplit(content, "[, \t]+"))
+    genes <- genes[genes != "" & genes != "."] # Clean up
+    return(genes)
+  }
+
+  output$dot_preset_buttons <- renderUI({
+    files <- genefiles()
+    # Add hardcoded presets to the list of buttons
+    hardcoded <- c("Immune", "Cell Death", "Proliferation", "Cell Cycle")
+
+    div(
+      class = "d-flex flex-wrap gap-2 mb-1",
+      # Hardcoded first
+      lapply(hardcoded, function(p) {
+        id <- paste0("preset_", gsub(" ", "_", tolower(p)))
+        actionButton(id, p, class = "btn-outline-primary btn-sm")
+      }),
+      # Then dynamic files
+      lapply(files, function(f) {
+        name <- tools::file_path_sans_ext(f)
+        id <- paste0("dyn_dot_", name)
+        actionButton(id, name, class = "btn-outline-secondary btn-sm")
+      })
+    )
+  })
+
+  output$module_preset_buttons <- renderUI({
+    files <- genefiles()
+    hardcoded <- c("Immune", "Cell Death", "Proliferation", "Cell Cycle")
+
+    div(
+      class = "d-flex flex-wrap gap-2 mb-1",
+      # Hardcoded first
+      lapply(hardcoded, function(p) {
+        id <- paste0("module_preset_", gsub(" ", "_", tolower(p)))
+        actionButton(id, p, class = "btn-outline-primary btn-sm")
+      }),
+      # Then dynamic files
+      lapply(files, function(f) {
+        name <- tools::file_path_sans_ext(f)
+        id <- paste0("dyn_module_", name)
+        actionButton(id, name, class = "btn-outline-secondary btn-sm")
+      })
+    )
+  })
+
+  # Observers for hardcoded presets
   observeEvent(input$preset_immune, {
     obj <- raw_obj()
     req(obj)
-    genes <- format_genes(c("PTPRC", "CD3E", "CD19", "CD8A", "CD4", "MS4A1", "CD14", "FCGR3A"), obj)
+    genes <- format_genes(c("PTPRC", "CD3E", "CD3D", "CD4", "CD8A", "CD19", "MS4A1", "CD14", "FCGR3A", "LYZ", "HLA-DRA", "NCAM1", "CD1C", "CD68", "MZB1", "PPBP"), obj)
     updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
   })
 
-  observeEvent(input$preset_death, {
+  observeEvent(input$preset_cell_death, {
     obj <- raw_obj()
     req(obj)
     genes <- format_genes(c("BAX", "BAK1", "CASP3", "CASP8", "CASP9", "FAS"), obj)
     updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
   })
 
-  observeEvent(input$preset_prolif, {
+  observeEvent(input$preset_proliferation, {
     obj <- raw_obj()
     req(obj)
     genes <- format_genes(c("MKI67", "TOP2A", "PCNA", "MCM2"), obj)
     updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
   })
 
-  observeEvent(input$preset_cycle, {
+  observeEvent(input$preset_cell_cycle, {
     obj <- raw_obj()
     req(obj)
     genes <- format_genes(c("CCND1", "CCNE1", "CDK2", "CDK4"), obj)
     updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
   })
 
-  # Module Preset observers
   observeEvent(input$module_preset_immune, {
     obj <- raw_obj()
     req(obj)
-    genes <- format_genes(c("PTPRC", "CD3E", "CD19", "CD8A", "CD4", "MS4A1", "CD14", "FCGR3A"), obj)
+    genes <- format_genes(c("PTPRC", "CD3E", "CD3D", "CD4", "CD8A", "CD19", "MS4A1", "CD14", "FCGR3A", "LYZ", "HLA-DRA", "NCAM1", "CD1C", "CD68", "MZB1", "PPBP"), obj)
     updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
   })
 
-  observeEvent(input$module_preset_death, {
+  observeEvent(input$module_preset_cell_death, {
     obj <- raw_obj()
     req(obj)
     genes <- format_genes(c("BAX", "BAK1", "CASP3", "CASP8", "CASP9", "FAS"), obj)
     updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
   })
 
-  observeEvent(input$module_preset_prolif, {
+  observeEvent(input$module_preset_proliferation, {
     obj <- raw_obj()
     req(obj)
     genes <- format_genes(c("MKI67", "TOP2A", "PCNA", "MCM2"), obj)
     updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
   })
 
-  observeEvent(input$module_preset_cycle, {
+  observeEvent(input$module_preset_cell_cycle, {
     obj <- raw_obj()
     req(obj)
     genes <- format_genes(c("CCND1", "CCNE1", "CDK2", "CDK4"), obj)
     updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
+  })
+
+  # Dynamic observers
+  observe({
+    files <- genefiles()
+    obj <- raw_obj()
+    req(obj)
+
+    for (f in files) {
+      name <- tools::file_path_sans_ext(f)
+
+      # Dot Plot Observer
+      local({
+        filename <- f
+        id_dot <- paste0("dyn_dot_", tools::file_path_sans_ext(filename))
+        observeEvent(input[[id_dot]], {
+          genes_raw <- load_genes_from_file(filename)
+          genes <- format_genes(genes_raw, obj)
+          updateTextAreaInput(session, "genes", value = paste(genes, collapse = ", "))
+        })
+
+        # Module Score Observer
+        id_mod <- paste0("dyn_module_", tools::file_path_sans_ext(filename))
+        observeEvent(input[[id_mod]], {
+          genes_raw <- load_genes_from_file(filename)
+          genes <- format_genes(genes_raw, obj)
+          updateTextAreaInput(session, "module_genes", value = paste(genes, collapse = ", "))
+        })
+      })
+    }
   })
 
   # Render the Dot Plot
@@ -489,7 +567,7 @@ server <- function(input, output, session) {
         tags$tr(
           tags$th("Cluster"),
           tags$th("Annotation"),
-          tags$th("Reason")
+          tags$th("Notes")
         )
       ),
       tags$tbody(
@@ -505,7 +583,7 @@ server <- function(input, output, session) {
           tags$tr(
             tags$td(cl),
             tags$td(textInput(id_ann, NULL, value = val_ann, width = "100%", placeholder = "Enter annotation...")),
-            tags$td(textInput(id_reason, NULL, value = val_reason, width = "100%", placeholder = "Enter reason..."))
+            tags$td(textInput(id_reason, NULL, value = val_reason, width = "100%", placeholder = "Enter notes..."))
           )
         })
       )
@@ -536,14 +614,43 @@ server <- function(input, output, session) {
     req(obj)
 
     data.frame(
-      Metric = c("Number of Cells", "Number of Features", "Assays Available", "Active Resolution"),
+      Metric = c("Object", "Cells", "Features", "Assays"),
       Value = c(
-        ncol(obj),
-        nrow(obj),
-        paste(Assays(obj), collapse = ", "),
-        input$resolution
+        if (is.null(input$SO) || length(input$SO) == 0) "N/A" else as.character(input$SO),
+        as.character(ncol(obj)),
+        as.character(nrow(obj)),
+        paste(Assays(obj), collapse = ", ")
       )
     )
+  })
+
+  # Reset Annotations logic
+  observeEvent(input$reset_annotes, {
+    showModal(modalDialog(
+      title = "Reset Cluster Annotations?",
+      "This will revert all annotations for the current resolution back to their original cluster numbers. This cannot be undone.",
+      footer = tagList(
+        modalButton("Cancel"),
+        actionButton("confirm_reset", "Reset", class = "btn-danger")
+      ),
+      easyClose = TRUE
+    ))
+  })
+
+  observeEvent(input$confirm_reset, {
+    obj <- raw_obj()
+    req(obj, input$resolution)
+
+    clusters <- gtools::mixedsort(unique(as.character(obj@meta.data[[input$resolution]])))
+
+    for (cl in clusters) {
+      id_ann <- paste0("ann_", input$resolution, "_", cl)
+      # Revert to cluster ID
+      annotes$data[[id_ann]] <- cl
+      updateTextInput(session, id_ann, value = cl)
+    }
+
+    removeModal()
   })
 
   # Download handler for annotations

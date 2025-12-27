@@ -183,7 +183,8 @@ server <- function(input, output, session) {
     updateSelectInput(session, "ref_file", choices = ref_files)
 
     # Update Feature Gene choices
-    updateSelectizeInput(session, "feature_gene", choices = rownames(obj), server = TRUE, selected = head(rownames(obj), 1))
+    choices <- sort(rownames(obj))
+    updateSelectizeInput(session, "feature_gene", choices = choices, server = TRUE, selected = head(choices, 1))
   })
 
   # Render the UMAP plot
@@ -495,11 +496,42 @@ server <- function(input, output, session) {
     res <- clustifyr_res()
     req(res)
 
-    plot_cor_heatmap(
-      cor_mat = res,
-      cluster_rows = TRUE,
-      cluster_columns = TRUE
-    )
+    # Convert to long format using base R
+    df <- as.data.frame(as.table(res))
+    colnames(df) <- c("Cluster", "Reference", "Correlation")
+
+    # Identify top hits per row (Cluster)
+    df <- df %>%
+      group_by(Cluster) %>%
+      mutate(is_top_hit = Correlation == max(Correlation)) %>%
+      ungroup()
+
+    # Apply hierarchical clustering for better visualization (matching clustifyr default)
+    if (nrow(res) > 1 && ncol(res) > 1) {
+      try(
+        {
+          row_ord <- hclust(dist(res))$order
+          col_ord <- hclust(dist(t(res)))$order
+          df$Cluster <- factor(df$Cluster, levels = rownames(res)[row_ord])
+          df$Reference <- factor(df$Reference, levels = colnames(res)[col_ord])
+        },
+        silent = TRUE
+      )
+    }
+
+    ggplot(df, aes(x = Reference, y = Cluster, fill = Correlation)) +
+      geom_tile() +
+      geom_point(data = subset(df, is_top_hit), color = "red", size = 3) +
+      scale_fill_viridis_c() +
+      theme_minimal() +
+      theme(
+        axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1),
+        panel.grid = element_blank()
+      ) +
+      labs(
+        title = "Clustifyr Correlation Heatmap",
+        subtitle = "Red dots indicate top hit(s) for each cluster"
+      )
   })
 
   # Apply Top Cell Types from Clustifyr

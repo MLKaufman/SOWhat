@@ -205,10 +205,28 @@ server <- function(input, output, session) {
     obj <- annotated_obj()
     req(obj, input$feature_gene)
 
-    FeaturePlot(obj, features = input$feature_gene, raster = FALSE, label = TRUE) +
+    # check if the gene has expression > 0
+    # we can use FetchData but a simpler way is to check the object data directly if possible,
+    # or just let ggplot/Seurat handle it but with explicit limits.
+    # Actually, let's just use the 'cols' inside FeaturePlot which is safer.
+    # To fix the "expression everywhere" bug, let's explicitly handle the 0 case.
+
+    gene <- input$feature_gene
+    # Get expression data
+    exp_data <- FetchData(obj, vars = gene)
+
+    if (max(exp_data[[gene]]) == 0) {
+      # If max is 0, return a plot that is clearly all grey
+      return(
+        DimPlot(obj, label = TRUE, raster = FALSE, cols = rep("lightgrey", length(unique(Idents(obj))))) +
+          theme_minimal() +
+          labs(title = paste("Feature Plot:", gene, "(No Expression)"), subtitle = "All cells have 0 expression")
+      )
+    }
+
+    FeaturePlot(obj, features = gene, raster = FALSE, label = TRUE, cols = c("lightgrey", "red")) +
       theme_minimal() +
-      scale_color_gradient(low = "lightgrey", high = "red") +
-      labs(title = paste("Feature Plot:", input$feature_gene))
+      labs(title = paste("Feature Plot:", gene))
   })
 
   # Helper to format genes based on detected species

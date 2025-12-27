@@ -14,6 +14,7 @@
 ### 🎨 Interactive Visualization & Renaming
 
 - **Live UMAP Labels**: Rename clusters in the annotation table and watch the UMAP plot update instantly.
+- **Feature Exploration**: Search for individual genes and visualize their expression directly on the UMAP with the **Feature Plot** tab.
 - **Dynamic Cluster Seeding**: New resolutions are automatically seeded with original cluster IDs to jumpstart your work.
 - **Resizable Interface**: Balance your workspace with an interactive divider between plots and metadata.
 
@@ -98,7 +99,8 @@ Rscript -e "shiny::runApp()"
 - `refmats/`: Directory for `.rds` reference matrices used by Clustifyr.
 - `docs/images/`: Visual assets for documentation.
 - `renv.lock`: Dependency lockfile.
+- `genelists/`: Directory for gene lists used by the app.
 
 ---
 
-*Built using Google Antigravity Gemini 3 Flash*
+*Built with assistance from Google Antigravity and Gemini 3 Flash*

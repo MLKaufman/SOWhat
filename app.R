@@ -34,6 +34,13 @@ ui <- page_sidebar(
           plotly::plotlyOutput("umap_plot", height = "800px")
         ),
         nav_panel(
+          "Feature Plot",
+          card_body(
+            selectizeInput("feature_gene", "Search & Select Gene", choices = NULL, multiple = FALSE, width = "100%"),
+            plotOutput("feature_plot", height = "800px")
+          )
+        ),
+        nav_panel(
           "Dot Plot",
           card_body(
             layout_column_wrap(
@@ -174,6 +181,9 @@ server <- function(input, output, session) {
     # Update refmats choices
     ref_files <- list.files("refmats", pattern = "\\.rds$", full.names = FALSE)
     updateSelectInput(session, "ref_file", choices = ref_files)
+
+    # Update Feature Gene choices
+    updateSelectizeInput(session, "feature_gene", choices = rownames(obj), server = TRUE, selected = head(rownames(obj), 1))
   })
 
   # Render the UMAP plot
@@ -187,6 +197,17 @@ server <- function(input, output, session) {
 
     plotly::ggplotly(p) %>%
       plotly::layout(yaxis = list(scaleanchor = "x", scaleratio = 1))
+  })
+
+  # Render Feature Plot
+  output$feature_plot <- renderPlot({
+    obj <- annotated_obj()
+    req(obj, input$feature_gene)
+
+    FeaturePlot(obj, features = input$feature_gene, raster = FALSE, label = TRUE) +
+      theme_minimal() +
+      scale_color_gradient(low = "lightgrey", high = "red") +
+      labs(title = paste("Feature Plot:", input$feature_gene))
   })
 
   # Helper to format genes based on detected species

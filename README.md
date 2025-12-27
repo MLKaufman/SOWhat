@@ -47,8 +47,8 @@ Ensure you have **R (>= 4.4.2)** installed on your system.
 ### 2. Clone the Repository
 
 ```bash
-git clone https://github.com/your-username/sowhat.git
-cd sowhat
+git clone https://github.com/MLKaufman/SOWhat
+cd SOWhat
 ```
 
 ### 3. Setup Environment with `renv`

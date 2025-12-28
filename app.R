@@ -7,6 +7,11 @@ library(gtools)
 library(DT)
 library(dplyr)
 library(clustifyr)
+library(clusterProfiler)
+library(org.Hs.eg.db)
+library(org.Mm.eg.db)
+library(tidyr)
+library(purrr)
 
 # Set max upload size to 2GB for large Seurat objects
 options(shiny.maxRequestSize = 2000 * 1024^2)
@@ -80,7 +85,7 @@ ui <- page_sidebar(
           )
         ),
         nav_panel(
-          "Markers",
+          "FindAllMarkers - Heatmap",
           layout_sidebar(
             sidebar = sidebar(
               actionButton("run_markers", "Find All Markers", class = "btn-primary w-100"),
@@ -94,6 +99,25 @@ ui <- page_sidebar(
             card(
               card_header("All Markers Table"),
               DT::DTOutput("markers_table")
+            )
+          )
+        ),
+        nav_panel(
+          "FindAllMarkers - GO:BP",
+          layout_sidebar(
+            sidebar = sidebar(
+              actionButton("run_gobp", "Run GO:BP Analysis", class = "btn-primary w-100"),
+              hr(),
+              uiOutput("gobp_cluster_select_ui"),
+              helpText("Global heatmap shows top 50 aggregated pathways. Table shows cluster-specific results.")
+            ),
+            card(
+              card_header("Top 50 Aggregated Pathways Heatmap"),
+              plotOutput("gobp_heatmap", height = "800px")
+            ),
+            card(
+              card_header("Cluster-Specific Pathways Table"),
+              DT::DTOutput("cluster_gobp_table")
             )
           )
         )
@@ -589,7 +613,7 @@ server <- function(input, output, session) {
   # Render Markers Table
   output$markers_table <- DT::renderDT({
     req(markers_data())
-    df <- markers_data() %>% filter(p_val_adj < 0.05)
+    df <- markers_data() %>% dplyr::filter(p_val_adj < 0.05)
     DT::datatable(df, options = list(pageLength = 10, scrollX = TRUE))
   })
 
@@ -693,6 +717,126 @@ server <- function(input, output, session) {
         paste(Assays(obj), collapse = ", ")
       )
     )
+  })
+
+  # GO:BP Analysis
+  gobp_res <- reactiveVal(NULL)
+
+  output$gobp_cluster_select_ui <- renderUI({
+    obj <- raw_obj()
+    req(obj, input$resolution)
+    clusters <- gtools::mixedsort(unique(as.character(obj@meta.data[[input$resolution]])))
+    selectInput("gobp_cluster", "Select Cluster for Table", choices = clusters)
+  })
+
+  observeEvent(input$run_gobp, {
+    obj <- annotated_obj()
+    req(obj)
+
+    withProgress(message = "Running GO:BP Analysis", value = 0, {
+      incProgress(0.1, detail = "Finding Markers...")
+      markers <- FindAllMarkers(obj, only.pos = TRUE, min.pct = 0.25, logfc.threshold = 0.25)
+
+      if (nrow(markers) == 0) {
+        showNotification("No markers found for GO enrichment.", type = "warning")
+        return()
+      }
+
+      incProgress(0.3, detail = "Detecting Species...")
+      # Detect species for bitr
+      first_genes <- head(rownames(obj), 100)
+      is_human <- sum(grepl("^[A-Z0-9]+$", first_genes)) > 80
+      org_db <- if (is_human) "org.Hs.eg.db" else "org.Mm.eg.db"
+
+      incProgress(0.1, detail = paste("Running enrichGO using", org_db, "..."))
+
+      results_list <- list()
+      clusters <- unique(markers$cluster)
+
+      for (i in seq_along(clusters)) {
+        cl <- clusters[i]
+        cl_genes <- markers %>%
+          dplyr::filter(cluster == cl) %>%
+          pull(gene)
+
+        # Convert to Entrez IDs
+        suppressMessages({
+          ids <- bitr(cl_genes, fromType = "SYMBOL", toType = "ENTREZID", OrgDb = org_db)
+        })
+
+        if (nrow(ids) > 0) {
+          ego <- enrichGO(
+            gene = ids$ENTREZID,
+            OrgDb = org_db,
+            ont = "BP",
+            pAdjustMethod = "BH",
+            pvalueCutoff = 0.05,
+            qvalueCutoff = 0.2,
+            readable = TRUE
+          )
+
+          if (!is.null(ego) && nrow(ego@result) > 0) {
+            cl_res <- as.data.frame(ego)
+            cl_res$Cluster <- cl
+            results_list[[as.character(cl)]] <- cl_res
+          }
+        }
+        incProgress(0.5 / length(clusters))
+      }
+
+      if (length(results_list) == 0) {
+        showNotification("No enriched pathways found.", type = "warning")
+        return()
+      }
+
+      combined_res <- do.call(rbind, results_list)
+      gobp_res(combined_res)
+      incProgress(1, detail = "Done!")
+    })
+  })
+
+  output$gobp_heatmap <- renderPlot({
+    res <- gobp_res()
+    req(res)
+
+    # Get top 5 pathways per cluster to aggregate
+    top_paths <- res %>%
+      group_by(Cluster) %>%
+      slice_min(order_by = p.adjust, n = 5) %>%
+      pull(Description) %>%
+      unique() %>%
+      head(50)
+
+    plot_df <- res %>%
+      dplyr::filter(Description %in% top_paths) %>%
+      dplyr::select(Cluster, Description, p.adjust) %>%
+      mutate(score = -log10(p.adjust))
+
+    # Fill missing values for the heatmap
+    all_clusters <- unique(res$Cluster)
+    all_paths <- unique(plot_df$Description)
+    full_grid <- expand.grid(Cluster = all_clusters, Description = all_paths)
+
+    plot_df <- full_grid %>%
+      left_join(plot_df, by = c("Cluster", "Description")) %>%
+      mutate(score = replace_na(score, 0))
+
+    ggplot(plot_df, aes(x = Cluster, y = Description, fill = score)) +
+      geom_tile() +
+      scale_fill_viridis_c(name = "-log10(adj P)") +
+      theme_minimal() +
+      theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+      labs(title = "Top 50 Aggregated Biological Processes", x = "Cluster", y = NULL)
+  })
+
+  output$cluster_gobp_table <- DT::renderDT({
+    res <- gobp_res()
+    req(res, input$gobp_cluster)
+
+    res %>%
+      dplyr::filter(Cluster == input$gobp_cluster) %>%
+      dplyr::select(ID, Description, GeneRatio, BgRatio, p.adjust, geneID) %>%
+      DT::datatable(options = list(pageLength = 10))
   })
 
   # Reset Annotations logic

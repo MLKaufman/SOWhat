@@ -62,18 +62,13 @@ R
 # Inside R:
 install.packages("renv") # If not already installed
 renv::init()             # To initialize the project
-renv::restore()          # To install all required packages from renv.lock
+```
+
+```bash
+Rscript -e "renv::restore()"
 ```
 
 ### 4. Run the Application
-
-Launch the Shiny app directly from the root directory:
-
-```r
-shiny::runApp()
-```
-
-or from the command line:
 
 ```bash
 Rscript -e "shiny::runApp()"
@@ -81,7 +76,41 @@ Rscript -e "shiny::runApp()"
 
 ---
 
-## 📖 Usage Guide
+## 🐳 Docker Deployment
+
+If you prefer to run SOWhat in a containerized environment, we provide both a `Dockerfile` and `docker-compose.yml`.
+
+### Using Docker Compose (Recommended)
+
+To build and run the app in one command:
+
+```bash
+docker compose up --build
+```
+
+The app will be accessible at [http://localhost:3838](http://localhost:3838).
+
+### Using Docker CLI
+
+1. **Build the image**:
+
+   ```bash
+   docker build -t sowhat .
+   ```
+
+2. **Run the container**:
+
+   ```bash
+   docker run -p 3838:3838 sowhat
+   ```
+
+3. **Access the app**:
+
+   Open your web browser and navigate to [http://localhost:3838](http://localhost:3838).
+
+---
+
+## 🚀 Features & Usage Guide
 
 1. **Upload Data**: Use the sidebar to upload a Seurat object (`.rds`). The app will initialize with a sample dataset if available.
 2. **Select Resolution**: Choose the clustering resolution you wish to annotate.

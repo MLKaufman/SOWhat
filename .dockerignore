@@ -1,0 +1,17 @@
+.Rhistory
+.RData
+.Rproj.user/
+renv/library/
+renv/local/
+renv/python/
+renv/staging/
+.git/
+.gitignore
+.gemini/
+docs/
+README.md
+Dockerfile
+docker-compose.yml
+!renv.lock
+!renv/activate.R
+!renv/settings.json

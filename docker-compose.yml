@@ -1,0 +1,11 @@
+services:
+  sowhat:
+    build: .
+    ports:
+      - "3838:3838"
+    volumes:
+      - .:/app
+      - /app/renv/library
+    environment:
+      - SHINY_PORT=3838
+    container_name: sowhat_app

@@ -65,7 +65,7 @@ renv::init()             # To initialize the project
 ```
 
 ```bash
-Rscript -e "renv::restore()"
+renv::restore() # restores the virtual environment from the renv.lock file
 ```
 
 ### 4. Run the Application
@@ -78,9 +78,20 @@ Rscript -e "shiny::runApp()"
 
 ## 🐳 Docker Deployment
 
-If you prefer to run SOWhat in a containerized environment, we provide both a `Dockerfile` and `docker-compose.yml`.
+### Option 1: Using DockerHub Prebuilt Image (easiest)
 
-### Using Docker Compose (Recommended)
+A prebuilt image is located on DockerHub: `https://hub.docker.com/repository/docker/mlkaufman/sowhat/`
+I can be auto downloaded and launched using
+
+```bash
+./run_container_app.sh
+```
+
+The app will be accessible at [http://0.0.0.0:3838](http://0.0.0.0:3838)
+
+If you prefer to run SOWhat in a containerized environment, we provide both a `Dockerfile` and `docker-compose.yml`:
+
+### Option 2: Using Docker Compose
 
 To build and run the app in one command:
 
@@ -90,7 +101,7 @@ docker compose up --build
 
 The app will be accessible at [http://localhost:3838](http://localhost:3838).
 
-### Using Docker CLI
+### Option 3: Using Docker CLI
 
 1. **Build the image**:
 

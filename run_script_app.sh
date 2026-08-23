@@ -1,0 +1,2 @@
+Rscript -e "shiny::runApp()"
+
